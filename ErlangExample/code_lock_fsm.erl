@@ -4,10 +4,10 @@
 -behaviour(gen_fsm).
 
 %% public API functions
--export([start_link/1, stop/0, button/1, get_state/0]).
+-export([start_link/1, stop/0, button/1, reset/0, get_state/0]).
 
 %% state names
--export([locked/2, open/2]).
+-export([locked/2, locked/3, open/2, open/3]).
 
 %% gen_fsm callback functions
 -export([init/1, handle_event/3, handle_sync_event/4, terminate/3]).
@@ -33,7 +33,11 @@ init(Code) ->
 	{ ok, locked, { [], lists:reverse(Code) } }.
 
 get_state() ->
-	gen_fsm:send_event(code_lock, get_state).
+	try
+		gen_fsm:sync_send_event(code_lock, get_state)
+	catch 
+		exit : { noproc, _ } -> closed
+	end.
 
 %% sends a 'button' event to the FSM registered as code_lock, when the event 
 %% is received by the FSM, gen_fsm calls StateName(Event, StateData)
@@ -52,10 +56,10 @@ locked({ button, Digit }, { SoFar, Code }) ->
 			% unlocks the lock
 			do_unlock(),
 			
-			% after the time out (30 seconds) has expired, the callback function
+			% after the time out (3 seconds) has expired, the callback function
 			% StateName(timeout, StateData) is called, which in this calls 
 			% will be open(timeout, { [], Code })
-			{ next_state, open, { [], Code }, 30000 };
+			{ next_state, open, { [], Code }, 3000 };
 		Incomplete when length(Incomplete) < length(Code) ->
 			% if the new digit does not add to a sequence that matches the 
 			% length of the code then stay in the 'locked' state but update 
@@ -67,34 +71,48 @@ locked({ button, Digit }, { SoFar, Code }) ->
 			{ next_state, locked, { [], Code } }
 	end;
 
-locked(get_state, State) ->
-	io:format("The code lock is locked, current state ~p", [State]),
-	{ next_state, locked, State };
-
 locked(Event, State) ->
 	io:format("Unexpected event received in locked state : ~p", [Event]),
 	{ next_state, locked, State }.
 
-open(get_state, State) ->
-	io:format("The code lock is open, current state ~p", [State]),
-	{ next_state, open, State, 30000 };
+locked(get_state, _From, State = { SoFar, _ }) ->	
+	{ reply, { locked, SoFar }, locked, State }.
 
 open(timeout, State) ->
 	% after timeout expires in the 'open' state, go into 'locked' state again
 	do_lock(),
 	{ next_state, locked, State }.
 
+open(get_state, _From, State) ->
+	{ reply, open, open, State, 3000 }.
+
 %% gen_fsm:send_all_state_event fires an event to the FSM regardless of its 
 %% state and can be handled with a handle_event/3 function defined in the 
 %% callback module
 stop() ->
-	gen_fsm:send_all_state_event(code_lock, stop).
+	gen_fsm:sync_send_all_state_event(code_lock, stop).
+
+reset() ->
+	gen_fsm:send_all_state_event(code_lock, reset).
 
 handle_event(stop, _StateName, State) ->
-	{ stop, normal, State }.
+	{ stop, normal, State };
+
+handle_event(reset, _StateName, { _, Code }) ->
+	{ next_state, locked, { [], Code } }.
+
+handle_sync_event(stop, _From, _StateName, State) ->
+	{ stop, normal, State };
+
+handle_sync_event(reset, _From, _StateName, { _, Code }) ->
+	{ next_state, locked, { [], Code } };
 
 handle_sync_event(get_state, _From, StateName, State) ->
 	{ reply, { StateName, State }, StateName, State }.
+
+terminate(normal, _StateName, _State) ->
+	do_clean_up(),
+	ok;
 
 terminate(shutdown, _StateName, _State) ->
 	do_clean_up(),
