@@ -86,8 +86,8 @@ open(timeout, State) ->
 open(get_state, _From, State) ->
 	{ reply, open, open, State, 3000 }.
 
-%% gen_fsm:send_all_state_event fires an event to the FSM regardless of its 
-%% state and can be handled with a handle_event/3 function defined in the 
+%% gen_fsm:sync_send_all_state_event fires an event to the FSM regardless of 
+%% its state and can be handled with a handle_event/3 function defined in the 
 %% callback module
 stop() ->
 	gen_fsm:sync_send_all_state_event(code_lock, stop).
